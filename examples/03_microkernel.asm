@@ -1,61 +1,51 @@
 ; ===================================================================
-; Example 3: Page 0 Microkernel & Page 1 State-Machine Router
-; Demonstrates how EXEC domain switches use Offset 0x00 Entry Routers
+; μ-CORE EXAMPLE 03: STACK-BASED CROSS-PAGE FAR CALLS (ABI v1.1.0)
 ; ===================================================================
-
-; ===================================================================
-; INSTRUCTION PAGE 0x00: SYSTEM KERNEL DOMAIN
+; Demonstrates reentrant, stack-based domain switching between:
+;   - Page 0x01: Application Domain (Caller)
+;   - Page 0x02: Math Kernel Service Domain (Callee)
+;
+; Compile:
+;   python3 toolchain/asm/ucore_asm.py examples/03_microkernel.asm -o build/
+; Run Emulator:
+;   python3 toolchain/asm/ucore_emu.py build/03_microkernel.bin
 ; ===================================================================
 
 ; -------------------------------------------------------------------
-; Offset 0x00: KERNEL ENTRY ROUTER (EXEC $00 target)
+; INSTRUCTION PAGE 0x01: APPLICATION DOMAIN
 ; -------------------------------------------------------------------
-KERNEL_ENTRY:
-    LOAD $00            ; Read Command ID from Shared Mailbox [00:$00]
-    JZ BOOT_RESET       ; If Command == 0 -> Perform Cold Boot Reset!
-    JMP SYSCALL_ROUTER  ; If Command != 0 -> Service System Call!
-
-BOOT_RESET:
-    MOV B, A
-    ALU XOR             ; Clear Accumulator A
-    STORE $00           ; Clear Mailbox Command
-    EXEC $01            ; Launch User Application on Page 1!
-
-SYSCALL_ROUTER:
-    LOAD $01            ; Read System Call Parameter from Mailbox [00:$01]
-    IO 0, OUT           ; Service I/O Request: Write payload to Port 0
+APP_START:
+    ; --- STEP 1: PREPARE FAR CALL RETURN LINKAGE ON STACK ---
+    LI A, #$01          ; Return Page ID (PR = 0x01)
+    PUSH A              ; Stack[0] <- PR_return (Pushed 1st)
     
-    MOV B, A
-    ALU XOR
-    STORE $00           ; Clear Mailbox Command (A = 0)
-    EXEC $01            ; Return domain execution back to User Page 1!
+    LI A, #APP_RESUME   ; Return Instruction Offset
+    PUSH A              ; Stack[1] <- PC_return (Pushed 2nd)
 
+    ; --- STEP 2: SET UP ARGUMENTS ---
+    LI A, #18           ; Parameter 1 = 18
+    LI B, #24           ; Parameter 2 = 24
 
-; ===================================================================
-; INSTRUCTION PAGE 0x01: USER APPLICATION DOMAIN
-; ===================================================================
+    ; --- STEP 3: EXECUTE FAR JUMP TO KERNEL SERVICE (Page 0x02, Offset 0x00) ---
+    LI C, #$02          ; C <- Kernel Service Page ID (0x02)
+    LI D, #$00          ; D <- Kernel Service Entry Offset (0x00)
+    JMP MAX             ; Far Jump! PR <- $02, PC <- $00
+
+APP_RESUME:
+    ; --- STEP 4: PROCESS KERNEL RETURN RESULT ---
+    ; Execution resumes here after Kernel performs FRET.
+    ; Result (18 + 24 = 42 / 0x2A) is waiting in Accumulator A.
+    STORE $10           ; Save result into RAM[C:$10]
+    HLT                 ; Execution Complete!
 
 ; -------------------------------------------------------------------
-; Offset 0x00: USER ENTRY ROUTER (EXEC $01 target)
+; INSTRUCTION PAGE 0x02: MATH KERNEL SERVICE DOMAIN
+; (In a real system, assembled into a separate binary page image)
 ; -------------------------------------------------------------------
-USER_ENTRY:
-    LOAD $01            ; Read User Continuation Stage variable [C:$01]
-    JZ USER_STAGE_0     ; Stage 0 -> First time initialization
-    JMP USER_STAGE_1    ; Stage 1 -> Resuming post-syscall!
+KERNEL_ADD_SERVICE:
+    ; --- KERNEL COMPUTATION ---
+    ALU ADD             ; A <- A + B (18 + 24 = 42)
 
-USER_STAGE_0:
-    LI A, #1
-    STORE $01           ; Set Local Stage Variable = 1 (Post-syscall resume point)
-    
-    LI A, #42
-    STORE $05           ; Store payload (42) into Mailbox parameter [00:$05]
-    LI A, #1
-    STORE $00           ; Store Syscall Command ID = 1 into Mailbox [00:$00]
-    
-    EXEC $00            ; Trigger Kernel Trap! (EXEC Page 0)
+    ; --- REENTRANT FAR RETURN TO CALLER ---
+    FRET                ; Expands to: POP D -> POP C -> JMP MAX
 
-USER_STAGE_1:
-    ; --- CONTROL RESUMES HERE AFTER KERNEL SERVICES REQUEST ---
-    HLT                 ; Application Complete
-
-```
