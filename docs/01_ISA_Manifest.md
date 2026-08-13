@@ -1,4 +1,4 @@
-# μ-Core ISA Specification (v4.4.0 Canonical Standard)
+# μ-Core ISA Specification (v4.4.0)
 
 **Status:** Canonical Reference Standard (Normative)
 
@@ -244,6 +244,7 @@ Action:   | Opcode | Operand| Execution  | Execution  | State      |
 * Auto-Increment Commit: If `Operand == MAX` on memory access, commit $D \gets (D + 1) \bmod 2^W$.
 
 
+* **Halt Behavior (`HLT`):** Freezes the execution phase counter ($T_0..T_4$) until a hardware reset occurs. `HLT` preserves all architectural state ($A, B, C, D, PC, PR, SP$, condition latches, stack contents, and RAM) unchanged. Reset behavior is defined by the implementation profile.
 
 ---
 
