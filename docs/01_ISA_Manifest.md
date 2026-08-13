@@ -1,6 +1,6 @@
-# μ-Core ISA Specification (v4.1.0 Canonical Standard)
+# μ-Core ISA Specification (v4.2.0)
 
-**Status:** Fixed Canonical Reference Standard (Normative)
+**Status:** Canonical Reference Standard (Normative)
 
 **Target Profile:** Discrete Transistors, Relays, CMOS/TTL, FPGA ($\mu 4, \mu 8, \mu 16$)
 
@@ -8,7 +8,7 @@
 
 ### 1. Architectural Philosophy & Parameterized Model ($W$)
 
-The **μ-Core v4.1.0 ISA** is a parameterized, technology-independent architecture designed for maximum hardware simplicity, deterministic timing, and strict orthogonal execution. Datapath width $W$ ($W \ge 4$) defines storage units, registers, and memory boundaries. Every instruction occupies exactly **2 Storage Units ($2W$ bits)**: `[Opcode: W] [Operand: W]`.
+The **μ-Core v4.2.0 ISA** is a parameterized, technology-independent architecture designed for maximum physical hardware minimalism, deterministic timing, and strict orthogonal execution. Datapath width $W$ ($W \ge 4$) defines storage units, registers, and memory boundaries. Every instruction occupies exactly **2 Storage Units ($2W$ bits)**: `[Opcode: W] [Operand: W]`.
 
 | Architectural Property | Parameterized Definition | $\mu 4$ ($W=4$) | $\mu 8$ ($W=8$) | $\mu 16$ ($W=16$) |
 | --- | --- | --- | --- | --- |
@@ -27,7 +27,7 @@ The **μ-Core v4.1.0 ISA** is a parameterized, technology-independent architectu
 
 $$\mathcal{S} = \langle A, B, C, D, PC, PR, SP, \text{FLAGS}, \text{Stack}[], \text{Memory}[] \rangle$$
 
-Condition flags ($ZF, CF$) exist purely as discrete latches on the ALU board and are not mapped to the main $W$-bit data bus.
+Condition flags ($ZF, CF$) exist purely as discrete hardware latches on the ALU board and are not connected to the main $W$-bit data bus or stack.
 
 #### MOV Register Mapping (`Bits [3:0]`)
 
@@ -116,25 +116,45 @@ Hardware decodes `Opcode[3:0]`; upper bits `Opcode[W-1:4]` are ignored.
 
 ---
 
-### 6. ALU Functional Contract
+### 6. Minimalist Hardware ALU Specification
 
-All arithmetic operations update both $ZF$ and $CF$ uniformly. `ADD`, `SUB`, and `CMP` share a single $W$-bit adder path:
+The mandatory ALU hardware requires only a single $W$-bit full adder, bitwise AND/OR logic gates, and a 1-bit right-wire shift ($A[i+1] \to A[i]$).
 
-| Sub-Op | Mnemonic | Operational Pseudocode | Zero Flag ($ZF$) | Carry Flag ($CF$) |
+$$\text{Sub-Opcode Format: } \text{SubOp}[3:0] = \{ \text{WriteDisable}, \text{OpID}[2:0] \}$$
+
+Setting Bit 3 (`SubOp[3] = 1`) inhibits the $T_4$ write-enable pulse to Register $A$, enabling non-destructive comparison operations without additional arithmetic hardware.
+
+```text
+               ┌────────────────────────┐
+   A [W-1:0] ──┤                        ├────── Main Bus (T3)
+               │   4-Op Core Logic      │
+   B [W-1:0] ──┤   (ADD, SUB, AND, OR)  ├────── Flags (ZF, CF)
+               └───────────┬────────────┘
+                           │
+SubOp[3] (No-Write) ───────┴─────────── Gate Register A Load Signal (T4)
+
+```
+
+#### Mandatory Sub-Opcode Engine
+
+| Sub-Op | Mnemonic | Write A? | Operational Pseudocode | Flags ($ZF, CF$) |
 | --- | --- | --- | --- | --- |
-| `0x0` | **ADD** | $A \gets (A + B) \bmod 2^W$ | $1$ if $A' = 0$ | $1$ if $(A + B) \ge 2^W$ |
-| `0x1` | **SUB** | $A \gets (A - B + 2^W) \bmod 2^W$ | $1$ if $A' = 0$ | $1$ if $A \ge B$ (No-Borrow) |
-| `0x2` | **AND** | $A \gets A \land B$ | $1$ if $A' = 0$ | $0$ (Cleared) |
-| `0x3` | **OR** | $A \gets A \lor B$ | $1$ if $A' = 0$ | $0$ (Cleared) |
-| `0x6` | **XOR** | $A \gets A \oplus B$ | $1$ if $A' = 0$ | $0$ (Cleared) |
-| `0x7` | **NOT** | $A \gets \text{NOT}(A)$ | $1$ if $A' = 0$ | Preserved |
-| `0x8` | **INC** | $A \gets (A + 1) \bmod 2^W$ | $1$ if $A' = 0$ | Preserved |
-| `0x9` | **DEC** | $A \gets (A - 1 + 2^W) \bmod 2^W$ | $1$ if $A' = 0$ | Preserved |
-| `0xB` | **SHR** | $A \gets \lfloor A / 2 \rfloor$ | $1$ if $A' = 0$ | $CF \gets A[0]$ |
-| `0xE` | **CMP** | Evaluate $A - B$ ($A$ unchanged) | $1$ if $A = B$ | $1$ if $A \ge B$ (No-Borrow) |
-| `0xF` | **TST** | Evaluate $A \land B$ ($A$ unchanged) | $1$ if $(A \land B) = 0$ | Preserved |
+| `0x0` | **ADD** | **Yes** | $A \gets (A + B) \bmod 2^W$ | $ZF \gets (A'=0), CF \gets \text{CarryOut}$ |
+| `0x1` | **SUB** | **Yes** | $A \gets (A - B + 2^W) \bmod 2^W$ | $ZF \gets (A'=0), CF \gets \text{NoBorrow}$ |
+| `0x2` | **AND** | **Yes** | $A \gets A \land B$ | $ZF \gets (A'=0), CF \gets 0$ |
+| `0x3` | **OR** | **Yes** | $A \gets A \lor B$ | $ZF \gets (A'=0), CF \gets 0$ |
+| `0x4` | **SHR** | **Yes** | $A \gets \lfloor A / 2 \rfloor$ | $ZF \gets (A'=0), CF \gets A[0]$ |
+| `0x9` | **CMP** | **No** | Evaluate $A - B$ | $ZF \gets (A = B), CF \gets (A \ge B)$ |
+| `0xA` | **TST** | **No** | Evaluate $A \land B$ | $ZF \gets ((A \land B) == 0), CF \gets 0$ |
 
-*Note: Left shift (`SHL`) is executed via self-addition (`ADD A, B` where $B = A$).*
+#### Software Synthesis Rules
+
+* **Left Shift (`SHL A`):** Executed via `ADD A` with $B = A$.
+* **Increment (`INC A`):** Software sets $B = 1$, then executes `ADD`.
+* **Decrement (`DEC A`):** Software sets $B = 1$, then executes `SUB`.
+* **Logical NOT (`NOT A`):** Executed via `SUB` from `MAX` ($2^W - 1$).
+
+*Note: Sub-opcodes `0x5..0x8` and `0xB..0xF` are reserved for hardware expansion. In minimal builds, reserved sub-opcodes behave as non-destructive `TST` or `NOP`.*
 
 ---
 
