@@ -1,4 +1,4 @@
-# μ-Core ISA Specification (v4.2.0)
+# μ-Core ISA Specification (v4.3.0 Canonical Standard)
 
 **Status:** Canonical Reference Standard (Normative)
 
@@ -6,9 +6,9 @@
 
 ---
 
-## 1. Architectural Philosophy & Parameterized Model ($W$)
+### 1. Architectural Philosophy & Parameterized Model ($W$)
 
-The **μ-Core v4.2.0 ISA** is a parameterized, technology-independent architecture designed for maximum physical hardware minimalism, deterministic timing, and strict orthogonal execution. Datapath width $W$ ($W \ge 4$) defines storage units, registers, and memory boundaries. Every instruction occupies exactly **2 Storage Units ($2W$ bits)**: `[Opcode: W] [Operand: W]`.
+The **μ-Core v4.3.0 ISA** is a parameterized, technology-independent architecture designed for maximum physical hardware minimalism, deterministic timing, and strict orthogonal execution. Datapath width $W$ ($W \ge 4$) defines storage units, registers, and memory boundaries. Every instruction occupies exactly **2 Storage Units ($2W$ bits)**: `[Opcode: W] [Operand: W]`.
 
 | Architectural Property | Parameterized Definition | $\mu 4$ ($W=4$) | $\mu 8$ ($W=8$) | $\mu 16$ ($W=16$) |
 | --- | --- | --- | --- | --- |
@@ -21,15 +21,17 @@ The **μ-Core v4.2.0 ISA** is a parameterized, technology-independent architectu
 
 ---
 
-## 2. Programmer State & Register Encodings
+### 2. Programmer State & Register Encodings
 
-### Architectural State Tuple ($\mathcal{S}$)
+#### Architectural State Tuple ($\mathcal{S}$)
 
-$$\mathcal{S} = \langle A, B, C, D, PC, PR, SP, \text{FLAGS}, \text{Stack}[], \text{Memory}[] \rangle$$
+$$\mathcal{S} = \langle A, B, C, D, PC, PR, SP, \text{Stack}[], \text{Memory}[] \rangle$$
 
-Condition flags ($ZF, CF$) exist purely as discrete hardware latches on the ALU board and are not connected to the main $W$-bit data bus or stack.
+#### Condition Latches ($\mathcal{C}$)
 
-### MOV Register Mapping (`Bits [3:0]`)
+Condition flags ($ZF, CF$) exist purely as **condition latches** on the ALU board. They are not general-purpose storage, are not addressable, are not connected to the main $W$-bit data bus, and are never saved or restored by `CALL` or `RET`.
+
+#### MOV Register Mapping (`Bits [3:0]`)
 
 `MOV` uses bits `[3:2]` for Source Register (`src`) and bits `[1:0]` for Destination Register (`dst`):
 
@@ -40,7 +42,7 @@ Condition flags ($ZF, CF$) exist purely as discrete hardware latches on the ALU 
 | `10` | `2` | **C** | High Data Page Selector / High Address Pointer ($Y$) |
 | `11` | `3` | **D** | Low Data Offset Pointer / Index Register ($X$) |
 
-### Stack Target Mapping (`Bits [2:0]` — Used in `PUSH` & `POP`)
+#### Stack Target Mapping (`Bits [2:0]` — Used in `PUSH` & `POP`)
 
 Operands use bits `[2:0]` to select the physical source/destination for stack transfers:
 
@@ -57,11 +59,11 @@ Operands use bits `[2:0]` to select the physical source/destination for stack tr
 
 ---
 
-## 3. Instruction Addressing & Sequential Page Rollover
+### 3. Instruction Addressing & Sequential Page Rollover
 
 Instruction addressing operates on an **instruction index** model via hardwired bus alignment.
 
-### Memory Address Formation ($T_0, T_1$)
+#### Memory Address Formation ($T_0, T_1$)
 
 For instruction fetches, the $W+1$ address bus lines ($\text{Addr}[W:0]$) are driven directly without an ALU cycle:
 
@@ -69,7 +71,7 @@ $$\text{Addr}[W:1] \gets PC[W-1:0]$$
 
 $$\text{Addr}[0] \gets T_1 \quad (0 \text{ during } T_0 \text{ Opcode Fetch}, 1 \text{ during } T_1 \text{ Operand Fetch})$$
 
-### Sequential Page Rollover
+#### Sequential Page Rollover
 
 When $PC$ rolls over from $2^W - 1$ to $0$, the carry output automatically increments $PR$:
 
@@ -77,19 +79,19 @@ $$PC \gets (PC + 1) \bmod 2^W \quad \mid \quad \text{If } PC \text{ overflows: }
 
 ---
 
-## 4. Dual-Sentinel Memory Access Modes
+### 4. Dual-Sentinel Memory Access Modes
 
 For memory accesses (`LOAD`, `STORE`), the upper two operand values act as hardware escape triggers:
 
 | Operand Field State | Addressing Mode | Target RAM Address | Action / Side Effect |
 | --- | --- | --- | --- |
-| $\text{Operand} \le \text{MAX}-2$ | **Direct Offset** | $C \mathbin{:} \text{Operand}$ | Immediate load or page-local RAM access |
+| $\text{Operand} \le \text{MAX}-2$ | **Direct Offset** | $C \mathbin{:} \text{Operand}$ | Read/Write RAM at page-local offset $C \mathbin{:} \text{Operand}$ |
 | $\text{Operand} == \text{MAX}-1$ | **Register Indirect** | $C \mathbin{:} D$ | Read/Write RAM at $C \mathbin{:} D$ |
 | $\text{Operand} == \text{MAX}$ | **Auto-Increment** | $C \mathbin{:} D$ | Read/Write RAM at $C \mathbin{:} D$, then $D \gets (D + 1) \bmod 2^W$ at $T_4$ |
 
 ---
 
-## 5. Primary Opcode Map (16 Opcodes)
+### 5. Primary Opcode Map (16 Opcodes)
 
 Hardware decodes `Opcode[3:0]`; upper bits `Opcode[W-1:4]` are ignored.
 
@@ -97,8 +99,8 @@ Hardware decodes `Opcode[3:0]`; upper bits `Opcode[W-1:4]` are ignored.
 | --- | --- | --- | --- | --- |
 | `0x0` | **NOP** | Ignored (`0`) | Advance $PC \gets PC + 1$ | Preserved |
 | `0x1` | **MOV** | `[3:2]=src, [1:0]=dst` | Register transfer: $R[dst] \gets R[src]$ | Preserved |
-| `0x2` | **LOAD** | Offset / `MAX-1` / `MAX` | Immediate load or RAM read into Accumulator $A$ | Preserved |
-| `0x3` | **STORE** | Offset / `MAX-1` / `MAX` | Write Accumulator $A$ to RAM offset or $C \mathbin{:} D$ | Preserved |
+| `0x2` | **LOAD** | Offset / `MAX-1` / `MAX` | Read RAM into Accumulator $A$ via direct offset or $C \mathbin{:} D$ | Preserved |
+| `0x3` | **STORE** | Offset / `MAX-1` / `MAX` | Write Accumulator $A$ to RAM via direct offset or $C \mathbin{:} D$ | Preserved |
 | `0x4` | **ALU** | `[3:0]=sub-opcode` | Execute arithmetic/logic on $A$ and $B$ | **Updated** |
 | `0x5` | **JMP** | Target / `MAX` | Unconditional jump (Local offset or Far via $C \mathbin{:} D$) | Preserved |
 | `0x6` | **JZ** | Target / `MAX` | Conditional jump if $ZF = 1$ (Local or Far via $C \mathbin{:} D$) | Preserved |
@@ -116,15 +118,17 @@ Hardware decodes `Opcode[3:0]`; upper bits `Opcode[W-1:4]` are ignored.
 
 ---
 
-## 6. Structured Bit-Pattern Hardware ALU Specification
-
-The ALU is structured directly around hardware control signals to achieve **near-zero decoding overhead**:
+### 6. Structured Bit-Pattern Hardware ALU Specification
 
 $$\text{Sub-Opcode Field Mapping: } \text{SubOp}[3:0] = \{ \text{NoWrite}, \text{BlockSel}, \text{Ctrl1}, \text{Ctrl0} \}$$
 
-### Signal Control Mapping
+#### Non-Writing ALU Operations Contract
 
-* **Bit 3 ($\text{NoWrite}$):** Inhibit Register $A$ write-enable pulse at $T_4$ (Flags updated only).
+For every non-writing ALU operation ($\text{SubOp}[3] = 1$), the condition latches ($ZF, CF$) are computed from the hypothetical $W$-bit bus result at $T_3$ **exactly as if the result had been written to Register $A$**, while Register $A$ remains unmodified.
+
+#### Signal Control Mapping
+
+* **Bit 3 ($\text{NoWrite}$):** Inhibit Register $A$ write-enable pulse at $T_4$.
 * **Bit 2 ($\text{BlockSel}$):** `0` = Select Full Adder path. `1` = Select Logic / Shift path.
 * **Bits [1:0] ($\text{Ctrl}[1:0]$):**
 * **On Adder Path ($\text{BlockSel} = 0$):**
@@ -133,7 +137,7 @@ $$\text{Sub-Opcode Field Mapping: } \text{SubOp}[3:0] = \{ \text{NoWrite}, \text
 * $C_{in} = \text{SubOp}[1] \oplus \text{SubOp}[0]$ (Drives carry-in for `SUB` and `INC`).
 
 
-* **On Logic Path ($\text{BlockSel} = 1$):** Selects AND, OR, SHR, or optional XOR path.
+* **On Logic Path ($\text{BlockSel} = 1$):** Selects AND, OR, SHR, or Optional Extension path.
 
 
 
@@ -147,9 +151,9 @@ SubOp[3] (No-Write) ───────┴─────────── Ga
 
 ```
 
-### Complete 16-Opcode Structured ALU Engine
+#### Structured ALU Sub-Opcode Engine
 
-| Sub-Op | Mnemonic | Write $A$? | Operation | Physical Control Signals | Tier |
+| Sub-Op | Mnemonic | Write $A$? | Operation / Evaluation Pseudocode | Physical Control Signals | Tier |
 | --- | --- | --- | --- | --- | --- |
 | `0x0` | **ADD** | **Yes** | $A \gets A + B$ | Adder: $\text{ForceB0}=0, \text{InvB}=0, C_{in}=0$ | **Tier 1 (Core)** |
 | `0x1` | **SUB** | **Yes** | $A \gets A - B$ | Adder: $\text{ForceB0}=0, \text{InvB}=1, C_{in}=1$ | **Tier 1 (Core)** |
@@ -158,21 +162,21 @@ SubOp[3] (No-Write) ───────┴─────────── Ga
 | `0x4` | **AND** | **Yes** | $A \gets A \land B$ | Bitwise AND gates | **Tier 1 (Core)** |
 | `0x5` | **OR** | **Yes** | $A \gets A \lor B$ | Bitwise OR gates | **Tier 1 (Core)** |
 | `0x6` | **SHR** | **Yes** | $A \gets \lfloor A / 2 \rfloor$ | Hardwired copper right-shift | **Tier 1 (Core)** |
-| `0x7` | **XOR** | **Yes** | $A \gets A \oplus B$ | Bitwise XOR gates | **Tier 2 (Opt)** |
+| `0x7` | **XOR** | **Yes** | $A \gets A \oplus B$ | Bitwise XOR gates (Optional Extension) | **Tier 2 (Opt)** |
 | `0x8` | **ADD-NW** | **No** | Test $A + B$ | Adder path; Inhibit Reg $A$ load | **Tier 1 (Core)** |
 | `0x9` | **CMP** | **No** | Test $A - B$ | Adder path; Inhibit Reg $A$ load | **Tier 1 (Core)** |
 | `0xA` | **INC-NW** | **No** | Test $A + 1$ | Adder path; Inhibit Reg $A$ load | **Tier 1 (Core)** |
 | `0xB` | **DEC-NW** | **No** | Test $A - 1$ | Adder path; Inhibit Reg $A$ load | **Tier 1 (Core)** |
 | `0xC` | **TST** | **No** | Test $A \land B$ | AND gates; Inhibit Reg $A$ load | **Tier 1 (Core)** |
 | `0xD` | **OR-NW** | **No** | Test $A \lor B$ | OR gates; Inhibit Reg $A$ load | **Tier 1 (Core)** |
-| `0xE` | **SHR-NW** | **No** | Test LSB shift | Hardwired shift; Inhibit Reg $A$ load | **Tier 1 (Core)** |
+| `0xE` | **SHR-NW** | **No** | Test $A \gg 1$ ($CF \gets A[0]$) | Hardwired shift; Inhibit Reg $A$ load | **Tier 1 (Core)** |
 | `0xF` | **TEQ** | **No** | Test $A \oplus B$ | XOR gates; Inhibit Reg $A$ load | **Tier 2 (Opt)** |
 
-*Note: In Tier 1 builds lacking physical XOR gates, executing `0x7` or `0xF` safely defaults to `OR` / `OR-NW` or behaves as a non-destructive `NOP`.*
+*Note: In Tier 1 builds lacking physical XOR gates, sub-opcodes `0x7` and `0xF` are formally reserved. Executing them behaves strictly as a non-destructive `TST` or `NOP` without altering register state.*
 
 ---
 
-## 7. Unified Subroutine Frame Protocol
+### 7. Unified Subroutine Frame Protocol
 
 Every `CALL` instruction creates a standardized **2-word return frame** on the $W$-bit LIFO stack. Every `RET` instruction consumes exactly one 2-word return frame.
 
@@ -182,14 +186,14 @@ Every `CALL` instruction creates a standardized **2-word return frame** on the $
 
 ```
 
-### Page-Boundary Return Context ($PR_{ret} \mathbin{:} PC_{ret}$)
+#### Page-Boundary Return Context ($PR_{ret} \mathbin{:} PC_{ret}$)
 
 When executing `CALL` at index $PC$:
 
 * $PC_{ret} = (PC + 1) \bmod 2^W$
 * $PR_{ret} = (PC == 2^W - 1) \;?\; (PR + 1) \bmod 2^W \;:\; PR$
 
-### Execution Flow
+#### Execution Flow
 
 ```text
 CALL Target / MAX:
@@ -207,9 +211,9 @@ RET:
 
 ---
 
-## 8. Deterministic 5-Phase Execution Pipeline ($T_0..T_4$)
+### 8. Deterministic 5-Phase Execution Pipeline ($T_0..T_4$)
 
-Every instruction executes across five fixed clock phases:
+Every instruction executes across five fixed, deterministic clock phases:
 
 ```text
 Phases:   |   T0   |   T1   |     T2     |     T3     |     T4     |
@@ -226,3 +230,13 @@ Action:   | Opcode | Operand| Execution  | Execution  | State      |
 * Default PC Advancement: $PC \gets PC + 1$ (If `SKP` condition met: $PC \gets PC + 2$).
 * Control Flow Branch Commit: If `JMP`/`CALL` taken, commit target to $PC$ (Local) or $PR \mathbin{:} PC$ (Far via $C \mathbin{:} D$).
 * Auto-Increment Commit: If `Operand == MAX` on memory access, commit $D \gets (D + 1) \bmod 2^W$.
+
+
+
+---
+
+### Architectural Invariant Summary
+
+The design has reached a clean, unassailable convergence. **Resist all further feature additions.**
+
+$$\begin{aligned} \text{Datapath} &= W \text{ bits} \\ \text{Registers} &= A, B, C, D \text{ (4 registers)} \\ \text{Instruction Encoding} &= [2W \text{ bits}] = [W \text{-bit Opcode}] \mathbin{:} [W \text{-bit Operand}] \\ \text{Primary Opcodes} &= 16 \text{ opcodes} \\ \text{Clock Engine} &= 5 \text{ fixed, deterministic phases } (T_0..T_4) \\ \text{Stack Primitive} &= W \text{-bit abstract ring buffer} \\ \text{Subroutine Frame} &= 2 \text{ words } (PR_{ret} \mathbin{:} PC_{ret}) \text{ unconditionally} \\ \text{Instruction Fetch} &= \text{Hardwired wire shift } (PC \to \text{Addr}) \\ \text{Addressing} &= \text{Dual Sentinel } (\text{MAX}-1 \implies [C:D], \text{MAX} \implies [C:D]+) \\ \text{ALU Encoding} &= \text{Direct hardware control bits } \{ \text{NoWrite}, \text{BlockSel}, \text{Ctrl1}, \text{Ctrl0} \} \end{aligned}$$
